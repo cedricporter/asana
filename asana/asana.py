@@ -2,6 +2,7 @@
 
 import requests
 import time
+import tornado.httpclient
 
 try:
     import simplejson as json
@@ -44,9 +45,9 @@ class AsanaAPI(object):
         :returns: 1 if exception was 429 (rate limit exceeded), otherwise, -1
         """
         if self.debug:
-            print "-> Got: %s" % r.status_code
-            print "-> %s" % r.text
-        if (r.status_code == 429):
+            print "-> Got: %s" % r.code
+            print "-> %s" % r.body
+        if (r.code == 429):
             self._handle_rate_limit(r)
             return 1
         else:
@@ -71,19 +72,20 @@ class AsanaAPI(object):
         target = "/".join([self.aurl, api_target])
         if self.debug:
             print "-> Calling: %s" % target
-        r = requests.get(target, auth=(self.apikey, ""))
-        if self._ok_status(r.status_code) and r.status_code is not 404:
-            if r.headers['content-type'].split(';')[0] == 'application/json':
-                if hasattr(r, 'text'):
-                    return json.loads(r.text)['data']
-                elif hasattr(r, 'content'):
-                    return json.loads(r.content)['data']
-                else:
-                    raise Exception('Unknown format in response from api')
+        res = yield tornado.httpclient.AsyncHTTPClient().fetch(
+            request=target,
+            method="GET",
+            auth_username=self.apikey,
+            auth_password="",
+        )
+        if self._ok_status(res.code) and res.code is not 404:
+            if res.headers['content-type'].split(';')[0] == 'application/json':
+                    yield json.loads(res.body)
             else:
-                raise Exception('Did not receive json from api: %s' % str(r))
+                raise Exception('Did not receive json from api: %s' %
+                                str(res.effective_url))
         else:
-            if (self.handle_exception(r) > 0):
+            if (self.handle_exception(res) > 0):
                 self._asana(api_target)
 
     def _asana_post(self, api_target, data):
@@ -100,7 +102,7 @@ class AsanaAPI(object):
         r = requests.post(target, auth=(self.apikey, ""), data=data)
         if self._ok_status(r.status_code) and r.status_code is not 404:
             if r.headers['content-type'].split(';')[0] == 'application/json':
-                return json.loads(r.text)['data']
+                yield json.loads(r.text)['data']
             else:
                 raise Exception('Did not receive json from api: %s' % str(r))
         else:
@@ -121,7 +123,7 @@ class AsanaAPI(object):
         r = requests.put(target, auth=(self.apikey, ""), data=data)
         if self._ok_status(r.status_code) and r.status_code is not 404:
             if r.headers['content-type'].split(';')[0] == 'application/json':
-                return json.loads(r.text)['data']
+                yield json.loads(r.text)['data']
             else:
                 raise Exception('Did not receive json from api: %s' % str(r))
         else:
@@ -146,7 +148,7 @@ class AsanaAPI(object):
 
         :param user_id: target user or self (default)
         """
-        return self._asana('users/%s' % user_id)
+        yield self._asana('users/%s' % user_id)
 
     def list_users(self, workspace=None, filters=None):
         """List users
@@ -155,14 +157,14 @@ class AsanaAPI(object):
         :param filters: Optional [] of filters you want to apply to listing
         """
         if workspace:
-            return self._asana('workspaces/%s/users' % workspace)
+            yield self._asana('workspaces/%s/users' % workspace)
         else:
             if filters:
                 fkeys = [x.strip().lower() for x in filters]
                 fields = ",".join(fkeys)
-                return self._asana('users?opt_fields=%s' % fields)
+                yield self._asana('users?opt_fields=%s' % fields)
             else:
-                return self._asana('users')
+                yield self._asana('users')
 
     def list_tasks(self, workspace, assignee, include_archived=False):
         """List tasks
@@ -178,35 +180,35 @@ class AsanaAPI(object):
             include_archived = "false"
         target = "tasks?workspace=%d&assignee=%s&include_archived=%s" % (
             workspace, assignee, include_archived)
-        return self._asana(target)
+        yield self._asana(target)
 
     def get_task(self, task_id):
         """Get a task
 
         :param task_id: id# of task"""
-        return self._asana("tasks/%d" % task_id)
+        yield self._asana("tasks/%d" % task_id)
 
     def get_subtasks(self, task_id):
         """Get subtasks associated with a given task
 
         :param task_id: id# of task"""
-        return self._asana("tasks/%d/subtasks" % task_id)
+        yield self._asana("tasks/%d/subtasks" % task_id)
 
     def list_projects(self, workspace=None):
         """"List projects in a workspace
 
         :param workspace: workspace whos projects you want to list"""
         if workspace:
-            return self._asana('workspaces/%d/projects' % workspace)
+            yield self._asana('workspaces/%d/projects' % workspace)
         else:
-            return self._asana('projects')
+            yield self._asana('projects')
 
     def get_project(self, project_id):
         """Get project
 
         :param project_id: id# of project
         """
-        return self._asana('projects/%d' % project_id)
+        yield self._asana('projects/%d' % project_id)
 
     def get_project_tasks(self, project_id, include_archived=False):
         """Get project tasks
@@ -219,7 +221,7 @@ class AsanaAPI(object):
             include_archived = "true"
         else:
             include_archived = "false"
-        return self._asana('projects/%d/tasks?include_archived=%s' % (
+        yield self._asana('projects/%d/tasks?include_archived=%s' % (
             project_id, include_archived))
 
     def list_stories(self, task_id):
@@ -227,18 +229,18 @@ class AsanaAPI(object):
 
         :param task_id: id# of task
         """
-        return self._asana('tasks/%d/stories' % task_id)
+        yield self._asana('tasks/%d/stories' % task_id)
 
     def get_story(self, story_id):
         """Get story
 
         :param story_id: id# of story
         """
-        return self._asana('stories/%d' % story_id)
+        yield self._asana('stories/%d' % story_id)
 
     def list_workspaces(self):
         """List workspaces"""
-        return self._asana('workspaces')
+        yield self._asana('workspaces')
 
     def create_task(self, name, workspace, assignee=None, assignee_status=None,
                     completed=False, due_on=None, followers=None, notes=None):
@@ -272,7 +274,7 @@ class AsanaAPI(object):
         if notes:
             payload['notes'] = notes
 
-        return self._asana_post('tasks', payload)
+        yield self._asana_post('tasks', payload)
 
     def update_task(self, task, name=None, assignee=None, assignee_status=None,
                     completed=False, due_on=None, notes=None):
@@ -304,7 +306,7 @@ class AsanaAPI(object):
         if notes:
             payload['notes'] = notes
 
-        return self._asana_put('tasks/%s' % task, payload)
+        yield self._asana_put('tasks/%s' % task, payload)
 
     def add_parent(self, task_id, parent_id):
         """Set the parent for an existing task.
@@ -312,8 +314,8 @@ class AsanaAPI(object):
         :param task_id: id# of a task
         :param parent_id: id# of a parent task
         """
-        return self._asana_post('tasks/%s/setParent' % task_id,
-                                {'parent': parent_id})
+        yield self._asana_post('tasks/%s/setParent' % task_id,
+                               {'parent': parent_id})
 
     def create_subtask(self, parent_id, name, completed=False, assignee=None,
                        notes=None, followers=None, assignee_status=None,
@@ -350,7 +352,7 @@ class AsanaAPI(object):
                 payload['due_on'] = due_on
             except ValueError:
                 raise Exception('Bad task due date: %s' % due_on)
-        return self._asana_post('tasks/%s/subtasks' % parent_id, payload)
+        yield self._asana_post('tasks/%s/subtasks' % parent_id, payload)
 
     def create_project(self, name, workspace, notes=None, archived=False):
         """Create a new project
@@ -365,7 +367,7 @@ class AsanaAPI(object):
             payload['notes'] = notes
         if archived:
             payload['archived'] = 'true'
-        return self._asana_post('projects', payload)
+        yield self._asana_post('projects', payload)
 
     def update_project(self, project_id, name=None, notes=None,
                        archived=False):
@@ -383,7 +385,7 @@ class AsanaAPI(object):
             payload['notes'] = notes
         if archived:
             payload['archived'] = 'true'
-        return self._asana_put('projects/%s' % project_id, payload)
+        yield self._asana_put('projects/%s' % project_id, payload)
 
     def update_workspace(self, workspace_id, name):
         """Update workspace
@@ -392,7 +394,7 @@ class AsanaAPI(object):
         :param name: Update name
         """
         payload = {'name': name}
-        return self._asana_put('workspaces/%s' % workspace_id, payload)
+        yield self._asana_put('workspaces/%s' % workspace_id, payload)
 
     def add_project_task(self, task_id, project_id):
         """Add project task
@@ -400,8 +402,8 @@ class AsanaAPI(object):
         :param task_id: id# of task
         :param project_id: id# of project
         """
-        return self._asana_post('tasks/%d/addProject' % task_id,
-                                {'project': project_id})
+        yield self._asana_post('tasks/%d/addProject' % task_id,
+                               {'project': project_id})
 
     def rm_project_task(self, task_id, project_id):
         """Remove a project from task
@@ -409,8 +411,8 @@ class AsanaAPI(object):
         :param task_id: id# of task
         :param project_id: id# of project
         """
-        return self._asana_post('tasks/%d/removeProject' % task_id,
-                                {'project': project_id})
+        yield self._asana_post('tasks/%d/removeProject' % task_id,
+                               {'project': project_id})
 
     def add_story(self, task_id, text):
         """Add a story to task
@@ -418,7 +420,7 @@ class AsanaAPI(object):
         :param task_id: id# of task
         :param text: story contents
         """
-        return self._asana_post('tasks/%d/stories' % task_id, {'text': text})
+        yield self._asana_post('tasks/%d/stories' % task_id, {'text': text})
 
     def add_tag_task(self, task_id, tag_id):
         """Tag a task
@@ -426,7 +428,7 @@ class AsanaAPI(object):
         :param task_id: id# of task
         :param tag_id: id# of tag to add
         """
-        return self._asana_post('tasks/%d/addTag' % task_id, {'tag': tag_id})
+        yield self._asana_post('tasks/%d/addTag' % task_id, {'tag': tag_id})
 
     def rm_tag_task(self, task_id, tag_id):
         """Remove a tag from a task.
@@ -434,28 +436,28 @@ class AsanaAPI(object):
         :param task_id: id# of task
         :param tag_id: id# of tag to remove
         """
-        return self._asana_post('tasks/%d/removeTag' % task_id, {'tag': tag_id})
+        yield self._asana_post('tasks/%d/removeTag' % task_id, {'tag': tag_id})
 
     def get_task_tags(self, task_id):
         """List tags that are associated with a task.
 
         :param task_id: id# of task
         """
-        return self._asana('tasks/%d/tags' % task_id)
+        yield self._asana('tasks/%d/tags' % task_id)
 
     def get_tags(self, workspace):
         """Get available tags for workspace
 
         :param workspace: id# of workspace
         """
-        return self._asana('workspaces/%d/tags' % workspace)
+        yield self._asana('workspaces/%d/tags' % workspace)
 
     def get_tag_tasks(self, tag_id):
         """Get tasks for a tag
 
         :param tag_id: id# of task
         """
-        return self._asana('tags/%d/tasks' % tag_id)
+        yield self._asana('tags/%d/tasks' % tag_id)
 
     def create_tag(self, tag, workspace):
         """Create tag
@@ -465,4 +467,4 @@ class AsanaAPI(object):
         """
         payload = {'name': tag, 'workspace': workspace}
 
-        return self._asana_post('tags', payload)
+        yield self._asana_post('tags', payload)
